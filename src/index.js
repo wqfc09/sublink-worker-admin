@@ -4,7 +4,7 @@ import { ClashConfigBuilder } from './ClashConfigBuilder.js';
 import { SurgeConfigBuilder } from './SurgeConfigBuilder.js';
 import { decodeBase64, encodeBase64, GenerateWebPath, sha256 } from './utils.js';
 import { PREDEFINED_RULE_SETS, SING_BOX_CONFIG, CLASH_CONFIG } from './config.js';
-import { t, setLanguage } from './i18n/index.js';
+import { t, setLanguage } from './i1n/index.js';
 import yaml from 'js-yaml';
 import {
     initDatabase, getSettings, updateSettings, getAdminPassword, setAdminPassword,
@@ -100,13 +100,13 @@ async function handleRequest(request, env, ctx) {
         }
         const finalString = finalProxyList.join('\n');
         if (!finalString) return new Response('Missing config parameter', { status: 400 });
-        return new Response(encodeBase64(finalString), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+        return new Response(encodeBase64(finalString), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
       }
 
       let selectedRules = url.searchParams.get('selectedRules') || settings.default_ruleset;
       let customRulesParam = url.searchParams.get('customRules');
       let userAgent = url.searchParams.get('ua') || settings.default_user_agent;
-      let lang = url.searchParams.get('lang') || 'zh-CN';
+      let langParam = url.searchParams.get('lang') || 'zh-CN';
       let customRules;
       try { selectedRules = JSON.parse(decodeURIComponent(selectedRules)); } catch (e) {}
       try { customRules = customRulesParam ? JSON.parse(decodeURIComponent(customRulesParam)) : JSON.parse(settings.default_custom_rules); } catch (error) { customRules = []; }
@@ -122,11 +122,11 @@ async function handleRequest(request, env, ctx) {
 
       let configBuilder;
       if (url.pathname.startsWith('/singbox')) {
-        configBuilder = new SingboxConfigBuilder(inputString, selectedRules, customRules, baseConfig, lang, userAgent);
+        configBuilder = new SingboxConfigBuilder(inputString, selectedRules, customRules, baseConfig, langParam, userAgent);
       } else if (url.pathname.startsWith('/clash')) {
-        configBuilder = new ClashConfigBuilder(inputString, selectedRules, customRules, baseConfig, lang, userAgent);
+        configBuilder = new ClashConfigBuilder(inputString, selectedRules, customRules, baseConfig, langParam, userAgent);
       } else {
-        configBuilder = new SurgeConfigBuilder(inputString, selectedRules, customRules, baseConfig, lang, userAgent).setSubscriptionUrl(url.href);
+        configBuilder = new SurgeConfigBuilder(inputString, selectedRules, customRules, baseConfig, langParam, userAgent).setSubscriptionUrl(url.href);
       }
 
       const config = await configBuilder.build();
@@ -163,6 +163,96 @@ async function handleRequest(request, env, ctx) {
     
     if (url.pathname === '/favicon.ico') return Response.redirect('https://icon-icons.com/icon/horror-crow-bird-raven-halloween/229333', 301);
     
+    // --- START: NEW UNIVERSAL SUBSCRIPTION API LOGIC ---
+    try {
+        let subUrl = url.pathname.slice(1);
+        if (url.search) {
+            subUrl += url.search;
+        }
+
+        if (!subUrl.startsWith('http://') && !subUrl.startsWith('https://')) {
+            subUrl = 'https://' + subUrl;
+        }
+
+        new URL(subUrl);
+
+        const requestUserAgent = request.headers.get('User-Agent') || '';
+        let targetClient = 'clash';
+        
+        if (/clash|stash|meta/i.test(requestUserAgent)) {
+            targetClient = 'clash';
+        } else if (/sing-box|nekoray|nekobox/i.test(requestUserAgent)) {
+            targetClient = 'sing-box';
+        } else if (/surge/i.test(requestUserAgent)) {
+            targetClient = 'surge';
+        } else if (/v2ray|shadowrocket|v2box/i.test(requestUserAgent)) {
+            targetClient = 'xray';
+        }
+        
+        const inputString = subUrl;
+        const verification = await verifySourceDomains(env.DB, inputString, settings);
+        if (!verification.allowed) return new Response(verification.reason, { status: 403 });
+
+        if (targetClient === 'xray') {
+            const proxylist = inputString.split('\n');
+            const finalProxyList = [];
+            let fetchUserAgent = settings.default_user_agent || 'curl/7.74.0';
+            let headers = new Headers({ "User-Agent": fetchUserAgent });
+            for (const proxy of proxylist) {
+                if (proxy.startsWith('http')) {
+                    try {
+                        const response = await fetch(proxy, { method: 'GET', headers: headers });
+                        const text = await response.text();
+                        let decodedText = decodeBase64(text.trim());
+                        if (decodedText.includes('%')) decodedText = decodeURIComponent(decodedText);
+                        finalProxyList.push(...decodedText.split('\n'));
+                    } catch (e) { console.warn('Failed to fetch the proxy:', e); }
+                } else {
+                    finalProxyList.push(proxy);
+                }
+            }
+            const finalString = finalProxyList.join('\n');
+            if (!finalString) return new Response('Could not resolve a valid proxy list from the URL.', { status: 400 });
+            return new Response(encodeBase64(finalString), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+        }
+
+        let selectedRules = settings.default_ruleset;
+        let customRules;
+        try { customRules = JSON.parse(settings.default_custom_rules); } catch (error) { customRules = []; }
+        
+        let subFetchingUserAgent = settings.default_user_agent;
+        let langForRules = settings.default_lang || 'zh-CN';
+
+        let baseConfig;
+        if (targetClient === 'sing-box') {
+            try { baseConfig = settings.default_base_config_singbox ? JSON.parse(settings.default_base_config_singbox) : null; } catch (e) { baseConfig = null; }
+            if (!baseConfig) { baseConfig = SING_BOX_CONFIG; }
+        } else if (targetClient === 'clash') {
+            try { baseConfig = settings.default_base_config_clash ? yaml.load(settings.default_base_config_clash) : null; } catch (e) { baseConfig = null; }
+            if (!baseConfig) { baseConfig = CLASH_CONFIG; }
+        }
+
+        let configBuilder;
+        if (targetClient === 'sing-box') {
+            configBuilder = new SingboxConfigBuilder(inputString, selectedRules, customRules, baseConfig, langForRules, subFetchingUserAgent);
+        } else if (targetClient === 'clash') {
+            configBuilder = new ClashConfigBuilder(inputString, selectedRules, customRules, baseConfig, langForRules, subFetchingUserAgent);
+        } else { // surge
+            configBuilder = new SurgeConfigBuilder(inputString, selectedRules, customRules, baseConfig, langForRules, subFetchingUserAgent).setSubscriptionUrl(url.href);
+        }
+
+        const config = await configBuilder.build();
+        const headers = { 'content-type': targetClient === 'sing-box' ? 'application/json; charset=utf-8' : targetClient === 'clash' ? 'text/yaml; charset=utf-8' : 'text/plain; charset=utf-8' };
+        if (targetClient === 'surge') {
+            headers['subscription-userinfo'] = 'upload=0; download=0; total=10737418240; expire=2546249531';
+        }
+        return new Response(targetClient === 'sing-box' ? JSON.stringify(config, null, 2) : config, { headers });
+
+    } catch (error) {
+        // Fall through to 404 if the path is not a valid URL
+    }
+    // --- END: NEW UNIVERSAL SUBSCRIPTION API LOGIC ---
+
     return new Response(t('notFound'), { status: 404 });
 }
 

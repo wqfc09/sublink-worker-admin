@@ -8,4 +8,18 @@ binding = "DB"
 database_name = "sublink-db" # <-- 请确保这是您在Cloudflare上创建的D1数据库的名称
 database_id = "c651f7b8-0714-4bc0-8094-46eb911e8bc3" # <-- 请务必将这里替换为您真实D1数据库的ID
 
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
 

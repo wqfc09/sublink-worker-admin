@@ -1,11 +1,11 @@
-name = "sublink-worker-admin"
+name = "sublink"
 main = "src/index.js"
 compatibility_date = "2024-07-24"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "sub" # <-- 请确保这是您在Cloudflare上创建的D1数据库的名称
-database_id = "ea87c959-8b81-435b-a04b-5dfe9f36f7f6" # <-- 请务必将这里替换为您真实D1数据库的ID
+database_name = "sublink-db" # <-- 请确保这是您在Cloudflare上创建的D1数据库的名称
+database_id = "c651f7b8-0714-4bc0-8094-46eb911e8bc3" # <-- 请务必将这里替换为您真实D1数据库的ID
 
 
